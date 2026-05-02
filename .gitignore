@@ -17,3 +17,7 @@ Thumbs.db
 .vscode/
 .idea/
 EOF
+
+# Fichiers temporaires matplotlib
+*.png
+!figures/*.png
