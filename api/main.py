@@ -1,34 +1,43 @@
 # api/main.py
 # API FastAPI pour SénSanté - Assistant pré-diagnostic médical
-from fastapi import FastAPI
 
-# Créer l'application
+# --- Imports ---
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from pathlib import Path
+import joblib
+import numpy as np
+import os
+from dotenv import load_dotenv
+from groq import Groq
+
+# --- Variables d'environnement ---
+load_dotenv()
+
+# --- Créer l'application ---
 app = FastAPI(
     title="SénSanté API",
     description="Assistant pré-diagnostic médical pour le Sénégal",
     version="0.2.0"
 )
 
-# Route de base : vérifier que l'API fonctionne
-@app.get("/health")
-def health_check():
-    """Vérification de l'état de l'API."""
-    return {
-        "status": "ok",
-        "message": "SénSanté API is running"
-    }
-
-from pydantic import BaseModel, Field
+# --- CORS ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Schémas Pydantic ---
 class PatientInput(BaseModel):
     """Données d'entrée : les symptômes d'un patient."""
     age: int = Field(..., ge=0, le=120, description="Age en années")
     sexe: str = Field(..., description="Sexe : M ou F")
-    temperature: float = Field(..., ge=35.0, le=42.0,
-                               description="Température en Celsius")
-    tension_sys: int = Field(..., ge=60, le=250,
-                             description="Tension systolique")
+    temperature: float = Field(..., ge=35.0, le=42.0, description="Température en Celsius")
+    tension_sys: int = Field(..., ge=60, le=250, description="Tension systolique")
     toux: bool = Field(..., description="Présence de toux")
     fatigue: bool = Field(..., description="Présence de fatigue")
     maux_tete: bool = Field(..., description="Présence de maux de tête")
@@ -41,14 +50,22 @@ class DiagnosticOutput(BaseModel):
     confiance: str = Field(..., description="Niveau de confiance")
     message: str = Field(..., description="Recommandation")
 
-import joblib
-import numpy as np
-from pathlib import Path
+class ExplainInput(BaseModel):
+    diagnostic: str = Field(..., description="Diagnostic prédit par le modèle")
+    probabilite: float = Field(..., description="Probabilité du diagnostic")
+    age: int = Field(...)
+    sexe: str = Field(...)
+    temperature: float = Field(...)
+    region: str = Field(...)
 
+class ExplainOutput(BaseModel):
+    explication: str = Field(..., description="Explication en français")
+    modele_llm: str = Field(default="llama-3.1-8b-instant", description="Modèle LLM utilisé")
+
+# --- Charger le modèle et les encodeurs au démarrage ---
 BASE_DIR = Path(__file__).parent.parent
 MODELS_DIR = BASE_DIR / "models"
 
-# --- Charger le modèle et les encodeurs au démarrage ---
 print("Chargement du modèle...")
 model = joblib.load(MODELS_DIR / "model.pkl")
 le_sexe = joblib.load(MODELS_DIR / "encoder_sexe.pkl")
@@ -56,6 +73,33 @@ le_region = joblib.load(MODELS_DIR / "encoder_region.pkl")
 feature_cols = joblib.load(MODELS_DIR / "feature_cols.pkl")
 print(f"Modèle chargé : {type(model).__name__}")
 print(f"Classes : {list(model.classes_)}")
+
+# --- Client Groq ---
+groq_client = None
+groq_api_key = os.getenv("GROQ_API_KEY")
+if groq_api_key:
+    groq_client = Groq(api_key=groq_api_key)
+    print("Client Groq initialisé.")
+else:
+    print("ATTENTION : GROQ_API_KEY non trouvée. /explain sera désactivé.")
+
+# --- Endpoints ---
+@app.get("/health")
+def health_check():
+    """Vérification de l'état de l'API."""
+    return {
+        "status": "ok",
+        "message": "SénSanté API is running"
+    }
+
+@app.get("/model-info")
+def model_info():
+    return {
+        "type": type(model).__name__,
+        "n_estimators": model.n_estimators,
+        "classes": list(model.classes_),
+        "n_features": model.n_features_in_
+    }
 
 @app.post("/predict", response_model=DiagnosticOutput)
 def predict(patient: PatientInput):
@@ -124,13 +168,49 @@ def predict(patient: PatientInput):
         confiance=confiance,
         message=messages.get(diagnostic, "Consultez un médecin.")
     )
-from fastapi.middleware.cors import CORSMiddleware
+SYSTEM_PROMPT = """Tu es un assistant médical sénégalais.
+Tu reçois un diagnostic et des données patient.
+Explique le résultat en français simple,
+comme un médecin parlerait à son patient.
+Sois rassurant mais recommande toujours
+une consultation médicale.
+Maximum 3 phrases.
+Ne fais JAMAIS de diagnostic toi-même.
+Tu expliques uniquement le diagnostic fourni."""
 
-# Autoriser les requêtes depuis le frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # En dev : tout accepter
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@app.post("/explain", response_model=ExplainOutput)
+def explain(data: ExplainInput):
+    """Expliquer un diagnostic en français avec un LLM."""
+    if not groq_client:
+        return ExplainOutput(
+            explication="Service d'explication indisponible. "
+                        "Clé API non configurée.",
+            modele_llm="aucun"
+        )
+
+    # Construire le user prompt
+    user_prompt = (
+        f"Patient : {data.sexe}, {data.age} ans, "
+        f"région {data.region}\n"
+        f"Température : {data.temperature}°C\n"
+        f"Diagnostic du modèle : {data.diagnostic} "
+        f"(probabilité {data.probabilite:.0%})\n"
+        f"Explique ce résultat au patient."
+    )
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=200,
+            temperature=0.3
+        )
+        explication = response.choices[0].message.content
+
+    except Exception as e:
+        explication = f"Erreur lors de l'appel au LLM : {str(e)}"
+
+    return ExplainOutput(explication=explication)
