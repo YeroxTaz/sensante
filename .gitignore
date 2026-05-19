@@ -6,15 +6,8 @@ __pycache__/
 venv/
 .env
 
-# Fichiers modèles binaires
+# Fichiers modèles binaires - notebooks uniquement
 notebooks/models/
-*.pkl
-
-# Ignorer les modèles dans notebooks uniquement
-notebooks/models/
-
-# Modele ML (trop gros pour GitHub)
-models/*.pkl
 
 # Fichiers OS
 .DS_Store
@@ -23,7 +16,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-EOF
 
 # Fichiers temporaires matplotlib
 *.png
