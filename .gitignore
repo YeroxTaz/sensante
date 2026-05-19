@@ -6,6 +6,13 @@ __pycache__/
 venv/
 .env
 
+# Fichiers modèles binaires
+notebooks/models/
+*.pkl
+
+# Ignorer les modèles dans notebooks uniquement
+notebooks/models/
+
 # Modele ML (trop gros pour GitHub)
 models/*.pkl
 
