@@ -20,4 +20,4 @@ EOF
 !figures/*.png
 
 # Clés API - NE JAMAIS COMMITTER
-.env
+.envgit-lfs-3.4.0/
