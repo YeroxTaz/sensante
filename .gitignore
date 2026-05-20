@@ -6,9 +6,6 @@ __pycache__/
 venv/
 .env
 
-# Fichiers modèles binaires - notebooks uniquement
-notebooks/models/
-
 # Fichiers OS
 .DS_Store
 Thumbs.db
@@ -16,6 +13,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+EOF
 
 # Fichiers temporaires matplotlib
 *.png
